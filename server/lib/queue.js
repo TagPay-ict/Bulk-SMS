@@ -13,4 +13,8 @@ export const smsQueue = new Queue('sms-processing', {
       age: 86400, // Keep failed jobs for 24 hours
     },
   },
+  settings: {
+    stalledInterval: 30000, // Check for stalled jobs every 30 seconds
+    maxStalledCount: 1,
+  },
 });
