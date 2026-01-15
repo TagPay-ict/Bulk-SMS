@@ -37,7 +37,6 @@ export function setupRoutes(app) {
       }
 
       const csvContent = req.file.buffer.toString('utf-8');
-      logger.debug('CSV content length:', csvContent.length, 'characters');
 
       // Create job
       logger.info('🔄 Creating BullMQ job...');
@@ -121,8 +120,6 @@ export function setupRoutes(app) {
           lastProgress = data;
           res.write(`data: ${data}\n\n`);
           res.flush?.(); // Flush if available (Node.js 18+)
-
-          logger.debug(`📊 Sent progress update for job ${jobId}:`, { state, progress });
         }
 
         // If job is completed or failed, close connection after a short delay
@@ -254,7 +251,6 @@ export function setupRoutes(app) {
         if (data) {
           const batchData = JSON.parse(data);
           allRecipients.push(...batchData.batch);
-          logger.debug(`Retrieved ${batchData.batch.length} recipients from batch: ${key}`);
         }
       }
 

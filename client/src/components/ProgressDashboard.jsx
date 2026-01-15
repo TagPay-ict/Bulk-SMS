@@ -27,7 +27,6 @@ export function ProgressDashboard({ jobId, onComplete, onBack }) {
     setError(null);
 
     eventSource.onopen = () => {
-      console.log('SSE connection opened');
       setIsConnected(true);
       reconnectAttempts.current = 0;
     };
@@ -40,7 +39,6 @@ export function ProgressDashboard({ jobId, onComplete, onBack }) {
         }
 
         const data = JSON.parse(event.data);
-        console.log('📊 Progress update received:', data);
         
         if (data.error) {
           setError(data.error);
@@ -48,13 +46,6 @@ export function ProgressDashboard({ jobId, onComplete, onBack }) {
           setIsConnected(false);
         } else {
           setProgress(data);
-          console.log('📊 Progress state updated:', {
-            state: data.state,
-            progress: data.progress,
-            total: data.progress?.total,
-            processed: data.progress?.processed,
-            failed: data.progress?.failed,
-          });
           
           if (data.state === 'completed' || data.state === 'failed') {
             setIsConnected(false);
@@ -67,20 +58,17 @@ export function ProgressDashboard({ jobId, onComplete, onBack }) {
           }
         }
       } catch (err) {
-        console.error('Error parsing SSE data:', err, event.data);
+        // Silently handle parsing errors
       }
     };
 
     eventSource.onerror = (err) => {
-      console.error('SSE error:', err);
       setIsConnected(false);
       
       // Only attempt reconnection if we haven't exceeded max attempts
       if (reconnectAttempts.current < maxReconnectAttempts && eventSource.readyState === EventSource.CLOSED) {
         reconnectAttempts.current += 1;
         const delay = Math.min(1000 * reconnectAttempts.current, 10000); // Exponential backoff, max 10s
-        
-        console.log(`Attempting to reconnect (${reconnectAttempts.current}/${maxReconnectAttempts}) in ${delay}ms...`);
         
         reconnectTimeoutRef.current = setTimeout(() => {
           connect();
@@ -131,16 +119,6 @@ export function ProgressDashboard({ jobId, onComplete, onBack }) {
   const { state, progress: progressData } = progress;
   const { total = 0, processed = 0, failed = 0 } = progressData || {};
   const percentage = total > 0 ? Math.round((processed / total) * 100) : 0;
-  
-  // Debug logging
-  console.log('📊 Rendering progress:', {
-    state,
-    total,
-    processed,
-    failed,
-    percentage,
-    progressData,
-  });
 
   return (
     <div className="space-y-4">

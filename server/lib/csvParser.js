@@ -45,15 +45,14 @@ export function normalizeCSVData(data) {
     return [];
   }
 
-  // Find phone number column (flexible matching) - needed for validation
+  // Find phone number column - only look for columns containing "phone"
   const firstRow = data[0];
   const phoneKey = Object.keys(firstRow).find(
-    (key) => key.toLowerCase().includes('phone') || 
-             (key.toLowerCase().includes('number') && !key.toLowerCase().includes('account'))
+    (key) => key.toLowerCase().includes('phone')
   );
 
   if (!phoneKey) {
-    logger.warn('⚠️  No phone number column detected. Looking for any column with "number" or "phone"');
+    logger.warn('No phone number column detected. Looking for columns containing "phone"');
   }
 
   const normalized = data.map((row, index) => {
@@ -69,11 +68,12 @@ export function normalizeCSVData(data) {
 
     return normalizedRow;
   }).filter((row) => {
-    // Filter out rows with empty phone numbers (lenient validation)
-    // Use the detected phone key or try to find it dynamically
-    const phoneValue = phoneKey ? row[phoneKey] : 
-      Object.values(row).find(val => val && val.length > 5); // Fallback: any value with length > 5
-    
+    // Filter out rows with empty phone numbers
+    // Only use the detected phone key (must contain "phone" in column name)
+    if (!phoneKey) {
+      return false; // Skip rows if no phone column detected
+    }
+    const phoneValue = row[phoneKey];
     return phoneValue && phoneValue.length > 0;
   });
   
@@ -82,10 +82,7 @@ export function normalizeCSVData(data) {
     logger.warn(`⚠️  Filtered out ${filteredCount} rows with empty phone numbers`);
   }
   
-  logger.info(`✅ Normalized ${normalized.length} valid recipients`);
-  if (normalized.length > 0) {
-    logger.info(`📋 Available columns: ${Object.keys(normalized[0]).filter(k => k !== 'originalIndex').join(', ')}`);
-  }
+  logger.info(`Normalized ${normalized.length} valid recipients`);
   
   return normalized;
 }

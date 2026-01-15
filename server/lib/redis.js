@@ -1,4 +1,5 @@
 import Redis from 'ioredis';
+import { logger } from './logger.js';
 
 // Parse Redis URL to extract connection details
 function parseRedisUrl(url) {
@@ -59,27 +60,27 @@ const redisConfig = parseRedisUrl(process.env.REDIS_URL || 'redis://localhost:63
 const redis = new Redis(redisConfig);
 
 redis.on('error', (err) => {
-  console.error('Redis connection error:', err.message || err);
+  logger.error('Redis connection error:', err.message || err);
 });
 
 redis.on('connect', () => {
-  console.log('✅ Redis connection established');
+  logger.info('Redis connection established');
 });
 
 redis.on('ready', () => {
-  console.log('✅ Redis connection ready');
+  logger.info('Redis connection ready');
 });
 
 redis.on('close', () => {
-  console.log('⚠️  Redis connection closed');
+  logger.warn('Redis connection closed');
 });
 
 redis.on('reconnecting', (delay) => {
-  console.log(`🔄 Redis reconnecting in ${delay}ms`);
+  logger.info(`Redis reconnecting in ${delay}ms`);
 });
 
 redis.on('end', () => {
-  console.log('❌ Redis connection ended');
+  logger.error('Redis connection ended');
 });
 
 export default redis;

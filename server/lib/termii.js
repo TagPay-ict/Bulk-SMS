@@ -31,16 +31,11 @@ function getTermiiBaseUrl() {
 // Sender ID constant
 const SENDER_ID = 'N-Alert';
 
-// Log configuration on module load
+// Validate API key on module load
 const apiKey = getTermiiApiKey();
-const baseUrl = getTermiiBaseUrl();
-
-logger.info('📧 Termii Client Configuration:', {
-  apiKeySet: !!apiKey,
-  apiKeyPreview: apiKey ? apiKey.substring(0, 10) + '...' : 'NOT SET',
-  baseUrl: baseUrl,
-  senderId: SENDER_ID,
-});
+if (!apiKey) {
+  logger.error('TERMII_API_KEY is not configured');
+}
 
 /**
  * Send single SMS via Termii API (for personalized messages)
@@ -57,11 +52,7 @@ export async function sendSingleSMS(phoneNumber, message, channel = 'dnd') {
     throw new Error('TERMII_API_KEY is not configured');
   }
 
-  logger.debug(`📱 Sending single SMS to ${phoneNumber}`, {
-    senderId: SENDER_ID,
-    channel,
-    messageLength: message.length,
-  });
+  // SMS sending in progress
 
   try {
     const response = await axios.post(
@@ -81,17 +72,14 @@ export async function sendSingleSMS(phoneNumber, message, channel = 'dnd') {
       }
     );
 
-    logger.debug(`✅ SMS sent successfully to ${phoneNumber}`, {
-      messageId: response.data?.message_id,
-      balance: response.data?.balance,
-    });
+    // SMS sent successfully
 
     return response.data;
   } catch (error) {
     const errorMsg = error.response
       ? `Termii API error: ${error.response.data?.message || error.response.statusText}`
       : error.message;
-    logger.error(`❌ Failed to send SMS to ${phoneNumber}:`, errorMsg);
+    logger.error('Failed to send SMS:', errorMsg);
     if (error.response) {
       throw new Error(errorMsg);
     }
@@ -118,11 +106,7 @@ export async function sendBulkSMS(phoneNumbers, message, channel = 'dnd') {
     throw new Error('Maximum 100 phone numbers per batch');
   }
 
-  logger.info(`📨 Sending bulk SMS to ${phoneNumbers.length} recipients`, {
-    senderId: SENDER_ID,
-    channel,
-    messageLength: message.length,
-  });
+  logger.info(`Sending bulk SMS to ${phoneNumbers.length} recipients`);
 
   try {
     const response = await axios.post(
@@ -142,20 +126,14 @@ export async function sendBulkSMS(phoneNumbers, message, channel = 'dnd') {
       }
     );
 
-    logger.info(`✅ Bulk SMS sent successfully`, {
-      recipients: phoneNumbers.length,
-      messageId: response.data?.message_id,
-      balance: response.data?.balance,
-    });
+    logger.info(`Bulk SMS sent successfully to ${phoneNumbers.length} recipients`);
 
     return response.data;
   } catch (error) {
     const errorMsg = error.response
       ? `Termii API error: ${error.response.data?.message || error.response.statusText}`
       : error.message;
-    logger.error(`❌ Failed to send bulk SMS:`, errorMsg, {
-      recipients: phoneNumbers.length,
-    });
+    logger.error(`Failed to send bulk SMS:`, errorMsg);
     if (error.response) {
       throw new Error(errorMsg);
     }

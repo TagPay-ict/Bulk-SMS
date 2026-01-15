@@ -31,12 +31,11 @@ async function processBatch(batch, template, senderId, channel, job, batchIndex,
     for (let i = 0; i < batch.length; i++) {
       const recipient = batch[i];
       
-      // Find phone number dynamically (could be phoneNumber, phone, number, etc.)
-      const phoneNumberRaw = recipient.phoneNumber || 
-                            recipient.phone || 
-                            Object.values(recipient).find(val => 
-                              val && typeof val === 'string' && val.length > 5 && /^[\d+]/.test(val)
-                            ) || '';
+      // Find phone number - only look for columns containing "phone"
+      const phoneNumberRaw = Object.keys(recipient)
+        .filter(key => key.toLowerCase().includes('phone'))
+        .map(key => recipient[key])
+        .find(val => val && typeof val === 'string' && val.trim().length > 0) || '';
       
       if (!phoneNumberRaw) {
         logger.warn(`⚠️  No phone number found for recipient at index ${recipient.originalIndex}`);
@@ -69,10 +68,7 @@ async function processBatch(batch, template, senderId, channel, job, batchIndex,
         continue;
       }
       
-      // Log normalization if different from original
-      if (phoneNumber !== phoneNumberRaw.replace(/\D/g, '')) {
-        logger.debug(`📞 Normalized phone: ${phoneNumberRaw} → ${phoneNumber}`);
-      }
+      // Phone number normalized
       
       try {
         const personalizedMessage = processTemplate(template, recipient);
@@ -88,9 +84,6 @@ async function processBatch(batch, template, senderId, channel, job, batchIndex,
           lastBatchTime: new Date().toISOString(),
         });
 
-        if ((i + 1) % 10 === 0) {
-          logger.debug(`Progress: ${i + 1}/${batch.length} sent in this batch`);
-        }
 
         // Small delay between individual sends to avoid rate limits
         await delay(INDIVIDUAL_DELAY_MS);
@@ -115,12 +108,11 @@ async function processBatch(batch, template, senderId, channel, job, batchIndex,
     
     // Normalize phone numbers at point of send
     const phoneNumbersWithErrors = batch.map((recipient) => {
-      // Find phone number dynamically
-      const phoneNumberRaw = recipient.phoneNumber || 
-                            recipient.phone || 
-                            Object.values(recipient).find(val => 
-                              val && typeof val === 'string' && val.length > 5 && /^[\d+]/.test(val)
-                            ) || '';
+      // Find phone number - only look for columns containing "phone"
+      const phoneNumberRaw = Object.keys(recipient)
+        .filter(key => key.toLowerCase().includes('phone'))
+        .map(key => recipient[key])
+        .find(val => val && typeof val === 'string' && val.trim().length > 0) || '';
       
       if (!phoneNumberRaw) {
         return { recipient, phoneNumber: null, error: 'No phone number found' };
@@ -133,10 +125,7 @@ async function processBatch(batch, template, senderId, channel, job, batchIndex,
         return { recipient, phoneNumber: null, error: `Invalid phone number format: ${phoneNumberRaw}` };
       }
       
-      // Log normalization if different
-      if (phoneNumber !== phoneNumberRaw.replace(/\D/g, '')) {
-        logger.debug(`📞 Normalized phone: ${phoneNumberRaw} → ${phoneNumber}`);
-      }
+      // Phone number normalized
       
       return { recipient, phoneNumber, error: null };
     });

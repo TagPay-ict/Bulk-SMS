@@ -19,13 +19,12 @@ export function normalizePhoneNumber(phoneInput) {
       const numValue = parseFloat(phone);
       if (!isNaN(numValue)) {
         phone = String(Math.floor(numValue)); // Convert to integer string
-        logger.debug(`Converted scientific notation: ${phoneInput} → ${phone}`);
       } else {
-        logger.warn(`Invalid scientific notation: ${phoneInput}`);
+        logger.warn('Invalid scientific notation in phone number');
         return null;
       }
     } catch (error) {
-      logger.warn(`Error converting scientific notation: ${phoneInput}`, error.message);
+      logger.warn('Error converting scientific notation in phone number');
       return null;
     }
   }
@@ -86,7 +85,6 @@ export function normalizePhoneNumber(phoneInput) {
     }
   }
 
-  logger.warn(`Failed to normalize phone number: ${phoneInput} (result: ${normalized})`);
   return null;
 }
 
