@@ -38,6 +38,32 @@ export function setupRoutes(app) {
 
       const csvContent = req.file.buffer.toString('utf-8');
 
+      // Create job with unique ID based on CSV content hash to prevent duplicates
+      const crypto = await import('crypto');
+      const csvHash = crypto.createHash('md5').update(csvContent + template + channel).digest('hex');
+      const jobId = `sms-${csvHash.substring(0, 16)}`;
+
+      // Check if job already exists
+      const existingJob = await smsQueue.getJob(jobId);
+      if (existingJob) {
+        const existingState = await existingJob.getState();
+        if (existingState === 'completed') {
+          logger.info(`Job ${jobId} already completed`);
+          return res.json({
+            jobId: existingJob.id,
+            message: 'Job already completed',
+            alreadyExists: true,
+          });
+        } else if (existingState === 'active' || existingState === 'waiting') {
+          logger.info(`Job ${jobId} already exists and is ${existingState}`);
+          return res.json({
+            jobId: existingJob.id,
+            message: 'Job already exists and is processing',
+            alreadyExists: true,
+          });
+        }
+      }
+
       // Create job
       logger.info('🔄 Creating BullMQ job...');
       const job = await smsQueue.add('process-sms', {
@@ -51,6 +77,15 @@ export function setupRoutes(app) {
           failed: 0,
           batches: 0,
           currentBatch: 0,
+        },
+      }, {
+        jobId: jobId, // Use custom job ID to prevent duplicates
+        removeOnComplete: {
+          age: 3600, // Keep completed jobs for 1 hour
+          count: 1000,
+        },
+        removeOnFail: {
+          age: 86400, // Keep failed jobs for 24 hours
         },
       });
 

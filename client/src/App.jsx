@@ -1,12 +1,17 @@
 import { useState, useEffect } from 'react';
 import Papa from 'papaparse';
+import { toast } from 'sonner';
 import { CSVUpload } from './components/CSVUpload';
 import { TemplateEditor } from './components/TemplateEditor';
 import { ProgressDashboard } from './components/ProgressDashboard';
 import { FailedBatches } from './components/FailedBatches';
+import { CSVPreview } from './components/CSVPreview';
+import { JobHistory } from './components/JobHistory';
+import { JobDetailsModal } from './components/JobDetailsModal';
 import { API_BASE_URL } from './config.js';
 import './App.css';
 const TEMPLATES_STORAGE_KEY = 'sms_templates';
+const JOBS_STORAGE_KEY = 'sms_jobs_history';
 
 function App() {
   const [csvFile, setCsvFile] = useState(null);
@@ -17,6 +22,12 @@ function App() {
   const [savedTemplates, setSavedTemplates] = useState([]);
   const [showFailedBatches, setShowFailedBatches] = useState(false);
   const [parsingCSV, setParsingCSV] = useState(false);
+  const [csvData, setCsvData] = useState(null);
+  const [csvRowCount, setCsvRowCount] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showJobHistory, setShowJobHistory] = useState(false);
+  const [showJobDetails, setShowJobDetails] = useState(false);
+  const [selectedJobId, setSelectedJobId] = useState(null);
 
   // Load saved templates from localStorage
   useEffect(() => {
@@ -31,9 +42,28 @@ function App() {
   }, []);
 
   const handleFileSelect = async (file) => {
+    // Validate file type
+    if (file.type !== 'text/csv' && !file.name.endsWith('.csv')) {
+      toast.error('Invalid file type', {
+        description: 'Please upload a CSV file (.csv)',
+      });
+      return;
+    }
+
+    // Validate file size (max 10MB)
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    if (file.size > maxSize) {
+      toast.error('File too large', {
+        description: `File size must be less than ${(maxSize / 1024 / 1024).toFixed(0)}MB`,
+      });
+      return;
+    }
+
     setCsvFile(file);
     setParsingCSV(true);
     setCsvColumns([]);
+    setCsvData(null);
+    setCsvRowCount(0);
 
     // Parse CSV to extract column names
     Papa.parse(file, {
@@ -42,6 +72,9 @@ function App() {
       complete: (results) => {
         if (results.errors.length > 0) {
           console.warn('CSV parsing warnings:', results.errors);
+          toast.warning('CSV parsing completed with warnings', {
+            description: `${results.errors.length} warning(s) found`,
+          });
         }
         
         // Extract column names from the first row
@@ -53,13 +86,36 @@ function App() {
               example: `{{${key.trim().toLowerCase().replace(/\s+/g, '')}}}`
             }));
           setCsvColumns(columns);
-          console.log('Detected CSV columns:', columns);
+          setCsvData(results.data);
+          setCsvRowCount(results.data.length);
+          
+          // Check for phone number column
+          const hasPhoneColumn = columns.some(col => 
+            col.key.includes('phone') || col.key.includes('number')
+          );
+          
+          if (!hasPhoneColumn) {
+            toast.warning('No phone number column detected', {
+              description: 'Please ensure your CSV has a column containing "phone" or "number"',
+            });
+          } else {
+            toast.success('CSV file loaded successfully', {
+              description: `Found ${results.data.length} row(s) with ${columns.length} column(s)`,
+            });
+          }
+        } else {
+          toast.error('CSV file is empty', {
+            description: 'Please upload a CSV file with data rows',
+          });
+          setCsvFile(null);
         }
         setParsingCSV(false);
       },
       error: (error) => {
         console.error('Error parsing CSV:', error);
-        alert('Error parsing CSV file. Please check the file format.');
+        toast.error('Error parsing CSV file', {
+          description: 'Please check the file format and try again',
+        });
         setParsingCSV(false);
         setCsvFile(null);
       },
@@ -71,22 +127,45 @@ function App() {
     const updated = [...savedTemplates, newTemplate];
     setSavedTemplates(updated);
     localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify(updated));
-    alert('Template saved successfully!');
+    toast.success('Template saved successfully!');
+  };
+
+  const handleUpdateTemplate = (oldName, newName, newContent) => {
+    const updated = savedTemplates.map(t => 
+      t.name === oldName 
+        ? { ...t, name: newName, content: newContent, updatedAt: new Date().toISOString() }
+        : t
+    );
+    setSavedTemplates(updated);
+    localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify(updated));
+    toast.success('Template updated successfully!');
+  };
+
+  const handleDeleteTemplate = (name) => {
+    const updated = savedTemplates.filter(t => t.name !== name);
+    setSavedTemplates(updated);
+    localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify(updated));
+    toast.success('Template deleted successfully!');
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
     if (!csvFile) {
-      alert('Please upload a CSV file');
+      toast.error('CSV file required', {
+        description: 'Please upload a CSV file before submitting',
+      });
       return;
     }
 
     if (!template.trim()) {
-      alert('Please enter a message template');
+      toast.error('Template required', {
+        description: 'Please enter a message template',
+      });
       return;
     }
 
+    setIsSubmitting(true);
     const formData = new FormData();
     formData.append('csv', csvFile);
     formData.append('template', template);
@@ -103,13 +182,33 @@ function App() {
       if (response.ok) {
         setJobId(data.jobId);
         setShowFailedBatches(false);
-        alert('Job created successfully! Processing started.');
+        
+        // Save job to history
+        const jobHistory = JSON.parse(localStorage.getItem(JOBS_STORAGE_KEY) || '[]');
+        jobHistory.unshift({
+          jobId: data.jobId,
+          createdAt: new Date().toISOString(),
+          template: template.substring(0, 50) + (template.length > 50 ? '...' : ''),
+          channel,
+          rowCount: csvRowCount,
+        });
+        localStorage.setItem(JOBS_STORAGE_KEY, JSON.stringify(jobHistory.slice(0, 50))); // Keep last 50 jobs
+        
+        toast.success('Job created successfully!', {
+          description: `Processing started for ${csvRowCount} recipient(s)`,
+        });
       } else {
-        alert(`Error: ${data.error}`);
+        toast.error('Failed to create job', {
+          description: data.error || 'Please try again',
+        });
       }
     } catch (error) {
       console.error('Error uploading:', error);
-      alert('Error uploading file. Please try again.');
+      toast.error('Network error', {
+        description: 'Failed to connect to server. Please check your connection and try again.',
+      });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -137,25 +236,44 @@ function App() {
         {!jobId ? (
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                CSV File
-              </label>
-              <CSVUpload onFileSelect={handleFileSelect} />
-              {parsingCSV && (
-                <p className="mt-2 text-sm text-blue-600">
-                  Parsing CSV file...
-                </p>
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-medium text-gray-700">
+                  CSV File
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowJobHistory(!showJobHistory)}
+                  className="text-sm text-blue-600 hover:text-blue-700"
+                >
+                  {showJobHistory ? 'Hide' : 'Show'} Job History
+                </button>
+              </div>
+              {showJobHistory && (
+                <div className="mb-4">
+                  <JobHistory 
+                    onSelectJob={(jobId) => {
+                      setJobId(jobId);
+                      setShowJobHistory(false);
+                      toast.info('Loading job details...');
+                    }}
+                  />
+                </div>
               )}
-              {csvFile && !parsingCSV && (
-                <div className="mt-2">
-                  <p className="text-sm text-gray-600">
-                    Selected: <span className="font-medium">{csvFile.name}</span>
-                  </p>
-                  {csvColumns.length > 0 && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      Detected {csvColumns.length} column(s): {csvColumns.map(c => c.originalKey).join(', ')}
-                    </p>
-                  )}
+              <CSVUpload onFileSelect={handleFileSelect} disabled={parsingCSV} />
+              {parsingCSV && (
+                <div className="mt-2 flex items-center gap-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                  <p className="text-sm text-blue-600">Parsing CSV file...</p>
+                </div>
+              )}
+              {csvFile && !parsingCSV && csvData && (
+                <div className="mt-4">
+                  <CSVPreview 
+                    data={csvData} 
+                    columns={csvColumns}
+                    rowCount={csvRowCount}
+                    fileName={csvFile.name}
+                  />
                 </div>
               )}
             </div>
@@ -165,8 +283,11 @@ function App() {
                 value={template}
                 onChange={setTemplate}
                 onSave={handleSaveTemplate}
+                onUpdate={handleUpdateTemplate}
+                onDelete={handleDeleteTemplate}
                 savedTemplates={savedTemplates}
                 csvColumns={csvColumns}
+                recipientCount={csvRowCount}
               />
             </div>
 
@@ -189,9 +310,17 @@ function App() {
 
             <button
               type="submit"
-              className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+              disabled={isSubmitting || parsingCSV || !csvFile || !template.trim()}
+              className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
-              Start Sending SMS
+              {isSubmitting ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                  Creating Job...
+                </>
+              ) : (
+                'Start Sending SMS'
+              )}
             </button>
           </form>
         ) : (
@@ -200,6 +329,10 @@ function App() {
               jobId={jobId} 
               onComplete={handleJobComplete}
               onBack={handleReset}
+              onShowDetails={(id) => {
+                setSelectedJobId(id);
+                setShowJobDetails(true);
+              }}
             />
 
             {showFailedBatches && (
@@ -216,6 +349,16 @@ function App() {
             </button>
           </div>
         )}
+
+        {/* Job Details Modal */}
+        <JobDetailsModal
+          jobId={selectedJobId || jobId}
+          isOpen={showJobDetails}
+          onClose={() => {
+            setShowJobDetails(false);
+            setSelectedJobId(null);
+          }}
+        />
       </div>
     </div>
   );

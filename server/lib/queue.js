@@ -14,7 +14,7 @@ export const smsQueue = new Queue('sms-processing', {
     },
   },
   settings: {
-    stalledInterval: 30000, // Check for stalled jobs every 30 seconds
-    maxStalledCount: 1,
+    stalledInterval: 60000, // Check for stalled jobs every 60 seconds (longer for large jobs)
+    maxStalledCount: 0, // Don't mark as stalled automatically (let worker handle it)
   },
 });

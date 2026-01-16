@@ -227,6 +227,13 @@ export function setupWorker() {
   const worker = new Worker(
     'sms-processing',
     async (job) => {
+      // Check if job was already completed
+      const state = await job.getState();
+      if (state === 'completed') {
+        logger.info(`Job ${job.id} already completed, skipping`);
+        return job.returnvalue || { success: true, message: 'Already completed' };
+      }
+
       const startTime = Date.now();
       const { csvContent, template, senderId, channel, recipients, isRetry } = job.data;
 
@@ -259,15 +266,45 @@ export function setupWorker() {
         mode: needsPersonalization ? 'PERSONALIZED (individual SMS)' : 'BULK (same message)',
       });
 
-      // Initialize progress
+      // Initialize or resume progress
       const totalBatches = Math.ceil(totalRecipients / BATCH_SIZE);
-      await job.updateProgress({
-        total: totalRecipients,
-        processed: 0,
-        failed: 0,
-        batches: totalBatches,
-        currentBatch: 0,
-      });
+      const existingProgress = job.progress || {};
+      
+      // Calculate which batch to resume from based on processed count
+      // processed count is number of recipients processed, not batches
+      const processedCount = existingProgress.processed || 0;
+      
+      // Calculate resumption point: which batch and how many recipients to skip within that batch
+      const completedBatches = Math.floor(processedCount / BATCH_SIZE);
+      const remainderInCurrentBatch = processedCount % BATCH_SIZE;
+      
+      // Resume from the incomplete batch (if any) or the next batch
+      // This ensures all recipients get SMS, not skipping incomplete batches
+      const startBatchIndex = remainderInCurrentBatch === 0 
+        ? completedBatches  // All batches up to completedBatches are done, start from next
+        : completedBatches; // Resume from incomplete batch
+      
+      // Number of recipients to skip within the starting batch (for personalized SMS)
+      const skipCount = remainderInCurrentBatch;
+
+      // Only initialize if starting fresh
+      if (startBatchIndex === 0 && processedCount === 0) {
+        await job.updateProgress({
+          total: totalRecipients,
+          processed: 0,
+          failed: 0,
+          batches: totalBatches,
+          currentBatch: 0,
+        });
+      } else if (startBatchIndex > 0 || processedCount > 0) {
+        logger.info(`🔄 Resuming job ${job.id} from batch ${startBatchIndex + 1}/${totalBatches}`, {
+          processedCount,
+          totalRecipients,
+          completedBatches,
+          remainderInCurrentBatch,
+          skipCount,
+        });
+      }
 
       // Create batches of 100 recipients
       const batches = [];
@@ -277,10 +314,25 @@ export function setupWorker() {
 
       logger.info(`📦 Created ${batches.length} batch(es) of up to ${BATCH_SIZE} recipients each`);
 
-      // Process batches sequentially with rate limiting
-      for (let i = 0; i < batches.length; i++) {
-        const batch = batches[i];
+      // Process batches sequentially with rate limiting (resume from where we left off)
+      for (let i = startBatchIndex; i < batches.length; i++) {
+        let batch = batches[i];
         const batchStartTime = Date.now();
+        
+        // If resuming from an incomplete batch:
+        // - For personalized SMS: Skip already-processed recipients (we know exactly which ones were sent)
+        // - For bulk SMS: Retry the entire batch (bulk is atomic - either all succeed or all fail)
+        const isResumingIncompleteBatch = (i === startBatchIndex && skipCount > 0);
+        const needsPersonalization = hasPlaceholders(template);
+        
+        if (isResumingIncompleteBatch && needsPersonalization) {
+          // For personalized SMS, skip already-processed recipients
+          logger.info(`⏭️  Resuming batch ${i + 1}: skipping first ${skipCount} recipients (already processed)`);
+          batch = batch.slice(skipCount);
+        } else if (isResumingIncompleteBatch && !needsPersonalization) {
+          // For bulk SMS, retry the entire batch (we don't know if it succeeded)
+          logger.info(`🔄 Resuming batch ${i + 1}: retrying entire batch (bulk SMS - atomic operation)`);
+        }
 
         await processBatch(batch, template, senderId, channel, job, i, batches.length);
 
@@ -321,6 +373,8 @@ export function setupWorker() {
     {
       connection: redis,
       concurrency: 1, // Process one job at a time
+      lockDuration: 300000, // Lock job for 5 minutes (for large jobs)
+      maxStalledCount: 0, // Don't auto-mark as stalled
     }
   );
 
@@ -329,15 +383,20 @@ export function setupWorker() {
   });
 
   worker.on('failed', (job, err) => {
-    logger.error(`❌ Job ${job?.id || 'unknown'} failed:`, err.message, err.stack);
+    logger.error(`❌ Job ${job?.id || 'unknown'} failed:`, err.message);
   });
 
   worker.on('error', (err) => {
-    logger.error('❌ Worker error:', err.message, err.stack);
+    logger.error('❌ Worker error:', err.message);
   });
 
-  worker.on('active', (job) => {
-    logger.info(`🔄 Job ${job.id} is now active`);
+  worker.on('active', async (job) => {
+    const state = await job.getState();
+    logger.info(`🔄 Job ${job.id} is now active (state: ${state})`);
+  });
+
+  worker.on('stalled', (jobId) => {
+    logger.warn(`⚠️  Job ${jobId} stalled - may be processing large dataset`);
   });
 
   logger.info('✅ Worker started and listening for jobs on queue: sms-processing');

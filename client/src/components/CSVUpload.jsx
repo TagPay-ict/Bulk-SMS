@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-export function CSVUpload({ onFileSelect }) {
+export function CSVUpload({ onFileSelect, disabled = false }) {
   const [dragActive, setDragActive] = useState(false);
 
   const handleDrag = (e) => {
@@ -31,9 +31,17 @@ export function CSVUpload({ onFileSelect }) {
 
   const handleFile = (file) => {
     if (file.type !== 'text/csv' && !file.name.endsWith('.csv')) {
-      alert('Please upload a CSV file');
+      // Will be handled by toast in parent component
       return;
     }
+    
+    // Check file size (max 10MB)
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    if (file.size > maxSize) {
+      // Will be handled by toast in parent component
+      return;
+    }
+    
     onFileSelect(file);
   };
 
@@ -55,10 +63,11 @@ export function CSVUpload({ onFileSelect }) {
         onChange={handleChange}
         className="hidden"
         id="csv-upload"
+        disabled={disabled}
       />
       <label
         htmlFor="csv-upload"
-        className="cursor-pointer flex flex-col items-center gap-4"
+        className={`flex flex-col items-center gap-4 ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
       >
         <svg
           className="w-12 h-12 text-gray-400"

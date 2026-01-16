@@ -1,13 +1,19 @@
 import { useEffect, useState, useRef } from 'react';
 
-export function ProgressDashboard({ jobId, onComplete, onBack }) {
+export function ProgressDashboard({ jobId, onComplete, onBack, onShowDetails }) {
   const [progress, setProgress] = useState(null);
   const [error, setError] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [startTime] = useState(Date.now());
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [finalElapsedTime, setFinalElapsedTime] = useState(null); // Store final time when completed
+  const [speedHistory, setSpeedHistory] = useState([]); // Track speed over time
   const eventSourceRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 5;
+  const previousProcessedRef = useRef(0);
+  const previousTimeRef = useRef(Date.now());
 
   const connect = () => {
     if (!jobId) return;
@@ -47,7 +53,30 @@ export function ProgressDashboard({ jobId, onComplete, onBack }) {
         } else {
           setProgress(data);
           
+          // Calculate speed (SMS per minute)
+          const currentTime = Date.now();
+          const currentProcessed = data.progress?.processed || 0;
+          const timeDiff = (currentTime - previousTimeRef.current) / 1000 / 60; // minutes
+          
+          if (timeDiff > 0 && currentProcessed > previousProcessedRef.current) {
+            const smsDiff = currentProcessed - previousProcessedRef.current;
+            const speed = smsDiff / timeDiff; // SMS per minute
+            
+            setSpeedHistory(prev => {
+              const updated = [...prev, { time: currentTime, speed }];
+              // Keep last 10 speed measurements for averaging
+              return updated.slice(-10);
+            });
+            
+            previousProcessedRef.current = currentProcessed;
+            previousTimeRef.current = currentTime;
+          }
+          
           if (data.state === 'completed' || data.state === 'failed') {
+            // Capture final elapsed time
+            const finalTime = Math.floor((Date.now() - startTime) / 1000);
+            setFinalElapsedTime(finalTime);
+            setElapsedTime(finalTime);
             setIsConnected(false);
             setTimeout(() => {
               eventSource.close();
@@ -79,6 +108,23 @@ export function ProgressDashboard({ jobId, onComplete, onBack }) {
       }
     };
   };
+
+  // Update elapsed time every second (stop when job is completed/failed)
+  useEffect(() => {
+    // Don't update if job is completed or failed (use final time if available)
+    if (progress?.state === 'completed' || progress?.state === 'failed') {
+      if (finalElapsedTime !== null) {
+        setElapsedTime(finalElapsedTime);
+      }
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setElapsedTime(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [startTime, progress?.state, finalElapsedTime]);
 
   useEffect(() => {
     if (!jobId) return;
@@ -119,6 +165,38 @@ export function ProgressDashboard({ jobId, onComplete, onBack }) {
   const { state, progress: progressData } = progress;
   const { total = 0, processed = 0, failed = 0 } = progressData || {};
   const percentage = total > 0 ? Math.round((processed / total) * 100) : 0;
+  const remaining = total - processed;
+  const successRate = processed > 0 ? Math.round(((processed - failed) / processed) * 100) : 0;
+  
+  // Calculate average speed (SMS per minute)
+  const averageSpeed = speedHistory.length > 0
+    ? Math.round(speedHistory.reduce((sum, item) => sum + item.speed, 0) / speedHistory.length)
+    : 0;
+  
+  // Calculate ETA (Estimated Time of Arrival) in seconds
+  const etaSeconds = averageSpeed > 0 && remaining > 0
+    ? Math.round((remaining / averageSpeed) * 60)
+    : null;
+  
+  const formatTime = (seconds) => {
+    if (seconds === null || seconds === undefined) return 'Calculating...';
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    if (minutes < 60) return `${minutes}m ${secs}s`;
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return `${hours}h ${mins}m`;
+  };
+  
+  const formatElapsedTime = (seconds) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    if (hours > 0) return `${hours}h ${minutes}m ${secs}s`;
+    if (minutes > 0) return `${minutes}m ${secs}s`;
+    return `${secs}s`;
+  };
 
   return (
     <div className="space-y-4">
@@ -137,6 +215,15 @@ export function ProgressDashboard({ jobId, onComplete, onBack }) {
             <h3 className="text-lg font-semibold text-gray-800">
               Job Progress
             </h3>
+            {onShowDetails && (
+              <button
+                onClick={() => onShowDetails(jobId)}
+                className="px-3 py-1 text-sm text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors"
+                title="View job details"
+              >
+                Details
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-3">
             {isConnected && state !== 'completed' && state !== 'failed' && (
@@ -176,7 +263,7 @@ export function ProgressDashboard({ jobId, onComplete, onBack }) {
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-4 text-center">
+        <div className="grid grid-cols-3 gap-4 text-center mb-4">
           <div>
             <p className="text-2xl font-bold text-gray-800">{total}</p>
             <p className="text-sm text-gray-600">Total</p>
@@ -188,6 +275,30 @@ export function ProgressDashboard({ jobId, onComplete, onBack }) {
           <div>
             <p className="text-2xl font-bold text-red-600">{failed}</p>
             <p className="text-sm text-gray-600">Failed</p>
+          </div>
+        </div>
+
+        {/* Enhanced metrics */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-gray-200">
+          <div>
+            <p className="text-xs text-gray-500 mb-1">Success Rate</p>
+            <p className="text-lg font-semibold text-green-600">{successRate}%</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 mb-1">Speed</p>
+            <p className="text-lg font-semibold text-blue-600">
+              {averageSpeed > 0 ? `${averageSpeed} SMS/min` : 'Calculating...'}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 mb-1">Time Elapsed</p>
+            <p className="text-lg font-semibold text-gray-700">{formatElapsedTime(elapsedTime)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 mb-1">ETA</p>
+            <p className="text-lg font-semibold text-purple-600">
+              {state === 'completed' ? 'Completed' : state === 'failed' ? 'Failed' : formatTime(etaSeconds)}
+            </p>
           </div>
         </div>
       </div>
